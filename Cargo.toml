@@ -1,0 +1,19 @@
+[package]
+name = "cyberdoc-generator"
+version = "0.1.0"
+authors = ["jac3km4 <jac3km4@pm.me>"]
+edition = "2018"
+
+[dependencies.redscript]
+git = "https://github.com/jac3km4/redscript.git"
+rev = "7d57e09"
+package = "redscript"
+
+[dependencies.gumdrop]
+version = "0.8"
+
+[dependencies.serde]
+version = "1"
+
+[dependencies.serde_json]
+version = "1"

@@ -171,7 +171,12 @@ fn build_index(pool: &ConstantPool) -> Vec<Reference> {
         .map(|(index, def)| {
             let name = pool.names.get(def.name).unwrap();
             let pretty = Rc::from(name.split(';').next().unwrap());
-            Reference { name: pretty, index }
+            let base = def.value.as_class().map(|c| c.base.cast());
+            Reference {
+                name: pretty,
+                index,
+                base,
+            }
         })
         .collect()
 }
@@ -182,6 +187,7 @@ fn collect_bases(idx: PoolIndex<Class>, pool: &ConstantPool) -> Result<Vec<Refer
         let reference = Reference {
             name: pool.def_name(idx)?,
             index: idx.cast(),
+            base: None,
         };
         let class = pool.class(idx)?;
         bases.push(reference);
@@ -193,6 +199,7 @@ fn collect_bases(idx: PoolIndex<Class>, pool: &ConstantPool) -> Result<Vec<Refer
 pub struct Reference {
     name: Rc<str>,
     index: PoolIndex<Definition>,
+    base: Option<PoolIndex<Definition>>,
 }
 
 impl Serialize for Reference {
@@ -200,9 +207,10 @@ impl Serialize for Reference {
     where
         S: Serializer,
     {
-        let mut state = serializer.serialize_struct("Reference", 2)?;
+        let mut state = serializer.serialize_struct("Reference", 3)?;
         state.serialize_field("name", self.name.as_ref())?;
-        state.serialize_field::<u32>("index", &self.index.into())?;
+        state.serialize_field("index", &u32::from(self.index))?;
+        state.serialize_field("base", &self.base.map(u32::from))?;
         state.end()
     }
 }

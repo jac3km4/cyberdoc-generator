@@ -6,7 +6,7 @@ edition = "2021"
 
 [dependencies.redscript]
 git = "https://github.com/jac3km4/redscript.git"
-rev = "d66479b"
+rev = "f5334c6"
 package = "redscript"
 
 [dependencies.gumdrop]

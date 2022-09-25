@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use gumdrop::Options;
-use redscript::bundle::{ConstantPool, PoolIndex, ScriptBundle};
+use redscript::bundle::{CName, ConstantPool, PoolIndex, ScriptBundle};
 use redscript::definition::{AnyDefinition, Class, Definition, Type};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
 use serde_json::{json, Value};
@@ -153,7 +153,7 @@ pub fn encode_definition(definition: &Definition, pool: &ConstantPool) -> Result
     Ok(result)
 }
 
-fn find_type(name: PoolIndex<String>, pool: &ConstantPool) -> Option<PoolIndex<Class>> {
+fn find_type(name: PoolIndex<CName>, pool: &ConstantPool) -> Option<PoolIndex<Class>> {
     pool.definitions().find_map(|(idx, def)| match &def.value {
         AnyDefinition::Class(_) if def.name == name => Some(idx.cast()),
         AnyDefinition::Enum(_) if def.name == name => Some(idx.cast()),
@@ -170,7 +170,7 @@ fn build_index(pool: &ConstantPool) -> Vec<Reference> {
         })
         .map(|(index, def)| {
             let name = pool.names.get(def.name).unwrap();
-            let pretty = Rc::new(name.split(';').next().unwrap().to_string());
+            let pretty = Rc::from(name.split(';').next().unwrap());
             Reference { name: pretty, index }
         })
         .collect()
@@ -191,7 +191,7 @@ fn collect_bases(idx: PoolIndex<Class>, pool: &ConstantPool) -> Result<Vec<Refer
 }
 
 pub struct Reference {
-    name: Rc<String>,
+    name: Rc<str>,
     index: PoolIndex<Definition>,
 }
 

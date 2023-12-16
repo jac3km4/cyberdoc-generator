@@ -6,11 +6,18 @@ edition = "2021"
 
 [dependencies.redscript]
 git = "https://github.com/jac3km4/redscript.git"
-rev = "0c64ff2"
+rev = "39511d8"
 package = "redscript"
+features = ["arc"]
+
+[dependencies.anyhow]
+version = "1"
 
 [dependencies.gumdrop]
 version = "0.8"
+
+[dependencies.rayon]
+version = "1.8"
 
 [dependencies.serde]
 version = "1"

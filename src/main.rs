@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use gumdrop::Options;
-use rayon::iter::{IntoParallelRefIterator, ParallelBridge, ParallelIterator};
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use redscript::bundle::{CName, ConstantPool, PoolIndex, ScriptBundle};
 use redscript::definition::{AnyDefinition, Class, Definition, Type};
 use serde::ser::{Serialize, SerializeStruct, Serializer};

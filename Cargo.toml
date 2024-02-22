@@ -6,7 +6,7 @@ edition = "2021"
 
 [dependencies.redscript]
 git = "https://github.com/jac3km4/redscript.git"
-rev = "39511d8"
+rev = "e17db18"
 package = "redscript"
 features = ["arc"]
 

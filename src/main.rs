@@ -2,9 +2,10 @@ use std::error::Error;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::Arc;
 
 use gumdrop::Options;
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use redscript::bundle::{CName, ConstantPool, PoolIndex, ScriptBundle};
 use redscript::definition::{AnyDefinition, Class, Definition, Type};
 use serde::ser::{Serialize, SerializeStruct, Serializer};
@@ -23,32 +24,41 @@ fn main() -> Result<(), Box<dyn Error>> {
     let opts = AppOpts::parse_args_default(&args)?;
 
     let bundle = ScriptBundle::load(&mut BufReader::new(File::open(opts.input)?))?;
-    let pool = &bundle.pool;
+    let pool = Arc::new(&bundle.pool);
     std::fs::create_dir_all(&opts.output)?;
 
-    for (idx, def) in pool.roots().filter(|(_, def)| {
-        matches!(&def.value, AnyDefinition::Class(_))
-            || matches!(&def.value, AnyDefinition::Function(_))
-            || matches!(&def.value, AnyDefinition::Enum(_))
-    }) {
-        let idx: u32 = idx.into();
-        let path = opts.output.as_path().join(format!("{}.json", idx));
-        let encoded = encode_definition(def, pool)?;
-        std::fs::write(path, serde_json::to_string(&encoded)?)?;
-    }
+    let pool = pool.clone();
+
+    pool.clone()
+        .roots()
+        .par_bridge()
+        .filter(|(_, def)| {
+            matches!(&def.value, AnyDefinition::Class(_))
+                || matches!(&def.value, AnyDefinition::Function(_))
+                || matches!(&def.value, AnyDefinition::Enum(_))
+        })
+        .try_for_each(
+            |(idx, def): (PoolIndex<Definition>, &Definition)| -> anyhow::Result<()> {
+                let idx: u32 = idx.into();
+                let path = opts.output.as_path().join(format!("{}.json", idx));
+                let encoded = encode_definition(def, pool.clone())?;
+                std::fs::write(path, serde_json::to_string(&encoded)?)?;
+                Ok(())
+            },
+        )?;
 
     let index_path = opts.output.as_path().join("index.json");
-    let index = build_index(pool);
+    let index = build_index(&pool);
     std::fs::write(index_path, serde_json::to_string(&index)?)?;
     Ok(())
 }
 
-pub fn encode_definition(definition: &Definition, pool: &ConstantPool) -> Result<Value, Box<dyn Error>> {
+pub fn encode_definition(definition: &Definition, pool: Arc<&ConstantPool>) -> anyhow::Result<Value> {
     let result = match &definition.value {
         AnyDefinition::Type(type_) => match type_ {
             Type::Prim => json!({"tag": "Type", "kind": "Prim", "name": pool.names.get(definition.name)?.as_ref()}),
             Type::Class => {
-                let class = find_type(definition.name, pool).unwrap();
+                let class = find_type(definition.name, &pool).unwrap();
                 let class_idx: u32 = class.into();
                 json!({"tag": "Type", "kind": "Class", "name": pool.names.get(definition.name)?.as_ref(), "index": class_idx })
             }
@@ -69,21 +79,21 @@ pub fn encode_definition(definition: &Definition, pool: &ConstantPool) -> Result
             }
         },
         AnyDefinition::Class(class) => {
-            let fields: Result<Vec<Value>, Box<dyn Error>> = class
+            let fields: anyhow::Result<Vec<Value>> = class
                 .fields
                 .iter()
-                .map(|f| encode_definition(pool.definition(*f)?, pool))
+                .map(|f| encode_definition(pool.definition(*f)?, pool.clone()))
                 .collect();
-            let methods: Result<Vec<Value>, Box<dyn Error>> = class
+            let methods: anyhow::Result<Vec<Value>> = class
                 .functions
                 .iter()
-                .map(|f| encode_definition(pool.definition(*f)?, pool))
+                .map(|f| encode_definition(pool.definition(*f)?, pool.clone()))
                 .collect();
             json!({
                 "tag": "Class",
                 "name": pool.names.get(definition.name)?.as_ref(),
                 "visibility": format!("{}", class.visibility).to_lowercase(),
-                "bases": collect_bases(class.base, pool)?,
+                "bases": collect_bases(class.base, &pool)?,
                 "fields": fields?,
                 "methods": methods?,
                 "isNative": class.flags.is_native(),
@@ -98,10 +108,10 @@ pub fn encode_definition(definition: &Definition, pool: &ConstantPool) -> Result
             "value": val,
         }),
         AnyDefinition::Enum(enum_) => {
-            let members: Result<Vec<Value>, Box<dyn Error>> = enum_
+            let members: anyhow::Result<Vec<Value>> = enum_
                 .members
                 .iter()
-                .map(|m| encode_definition(pool.definition(*m)?, pool))
+                .map(|m| encode_definition(pool.definition(*m)?, pool.clone()))
                 .collect();
             json!({
                 "tag": "Enum",
@@ -110,36 +120,36 @@ pub fn encode_definition(definition: &Definition, pool: &ConstantPool) -> Result
             })
         }
         AnyDefinition::Function(fun) => {
-            let parameters: Result<Vec<Value>, Box<dyn Error>> = fun
+            let parameters: anyhow::Result<Vec<Value>> = fun
                 .parameters
                 .iter()
-                .map(|m| encode_definition(pool.definition(*m)?, pool))
+                .map(|m| encode_definition(pool.definition(*m)?, pool.clone()))
                 .collect();
             json!({
                 "tag": "Function",
                 "name": pool.names.get(definition.name)?.as_ref(),
                 "parameters": parameters?,
-                "returnType": fun.return_type.map(|idx| encode_definition(pool.definition(idx).unwrap(), pool).unwrap()),
+                "returnType": fun.return_type.map(|idx| encode_definition(pool.definition(idx).unwrap(), pool.clone()).unwrap()),
                 "visibility": format!("{}", fun.visibility).to_lowercase(),
                 "isStatic": fun.flags.is_static(),
                 "isFinal": fun.flags.is_final(),
                 "isExec": fun.flags.is_exec(),
                 "isCallback": fun.flags.is_callback(),
                 "isNative": fun.flags.is_native(),
-                "source": fun.source.as_ref().map(|idx| encode_definition(pool.definition(idx.file).unwrap(), pool).unwrap())
+                "source": fun.source.as_ref().map(|idx| encode_definition(pool.definition(idx.file).unwrap(), pool.clone()).unwrap())
             })
         }
         AnyDefinition::Parameter(param) => json!({
             "tag": "Parameter",
             "name": pool.names.get(definition.name)?.as_ref(),
-            "type": encode_definition(pool.definition(param.type_)?, pool)?,
+            "type": encode_definition(pool.definition(param.type_)?, pool.clone())?,
             "isOut": param.flags.is_out(),
             "isOptional": param.flags.is_optional(),
         }),
         AnyDefinition::Field(field) => json!({
             "tag": "Field",
             "name": pool.names.get(definition.name)?.as_ref(),
-            "type": encode_definition(pool.definition(field.type_)?, pool)?,
+            "type": encode_definition(pool.definition(field.type_)?, pool.clone())?,
             "isNative": field.flags.is_native(),
             "isEdit": field.flags.is_editable(),
             "isInline": field.flags.is_inline(),
@@ -170,7 +180,7 @@ fn build_index(pool: &ConstantPool) -> Vec<Reference> {
         })
         .map(|(index, def)| {
             let name = pool.names.get(def.name).unwrap();
-            let pretty = Rc::from(name.split(';').next().unwrap());
+            let pretty = Arc::from(name.split(';').next().unwrap());
             let base = def.value.as_class().map(|c| c.base.cast());
             Reference {
                 name: pretty,
@@ -181,7 +191,7 @@ fn build_index(pool: &ConstantPool) -> Vec<Reference> {
         .collect()
 }
 
-fn collect_bases(idx: PoolIndex<Class>, pool: &ConstantPool) -> Result<Vec<Reference>, Box<dyn Error>> {
+fn collect_bases(idx: PoolIndex<Class>, pool: &ConstantPool) -> anyhow::Result<Vec<Reference>> {
     let mut bases = vec![];
     if idx != PoolIndex::UNDEFINED {
         let reference = Reference {
@@ -197,7 +207,7 @@ fn collect_bases(idx: PoolIndex<Class>, pool: &ConstantPool) -> Result<Vec<Refer
 }
 
 pub struct Reference {
-    name: Rc<str>,
+    name: Arc<str>,
     index: PoolIndex<Definition>,
     base: Option<PoolIndex<Definition>>,
 }
